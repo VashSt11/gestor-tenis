@@ -1,27 +1,18 @@
 import streamlit as st
 import gspread
-from google.oauth2.service_account import Credentials
 
-# --- DIAGNÓSTICO DE CONEXIÓN ---
-st.set_page_config(page_title="Diagnóstico")
-st.title("Diagnóstico de Conexión")
+# Usamos service_account_from_dict que es más amigable
+@st.cache_resource
+def get_connection():
+    # Convertimos los Secrets en un diccionario simple
+    creds_dict = dict(st.secrets["gcp_service_account"])
+    # gspread se encarga de procesar la clave
+    client = gspread.service_account_from_dict(creds_dict)
+    return client
 
 try:
-    # Carga de credenciales desde Secrets
-    info = st.secrets["gcp_service_account"]
-    scopes = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
-    
-    # Intentar crear las credenciales
-    creds = Credentials.from_service_account_info(info, scopes=scopes)
-    st.write("✅ Credenciales cargadas correctamente.")
-    
-    # Intentar autorizar
-    client = gspread.authorize(creds)
-    st.write("✅ Autorización de gspread exitosa.")
-    
-    # Intentar abrir la hoja
-    sheet = client.open_by_key("1MC0tdj5LJn8BtfEdTJjsYjSuk6PDirZejkKQEJlnoYo")
-    st.success("🎉 ¡CONEXIÓN EXITOSA!")
-
+    client = get_connection()
+    sheet = client.open_by_key("1MC0tdj5LJn8BtfEdTJjsYjSuk6PDirZejkKQEJlnoYo").sheet1
+    st.success("¡Conexión establecida con éxito!")
 except Exception as e:
-    st.error(f"FALLO DE CONEXIÓN: {e}")
+    st.error(f"Error: {e}")
