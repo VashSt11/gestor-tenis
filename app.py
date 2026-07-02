@@ -7,14 +7,13 @@ from google.oauth2.service_account import Credentials
 st.set_page_config(page_title="Gestor de Alumnos", layout="wide")
 st.title("🎾 Gestor de Asistencias y Recuperaciones")
 
-# --- CONEXIÓN A GOOGLE SHEETS ---
+# --- CONEXIÓN A GOOGLE SHEETS MEJORADA ---
 @st.cache_resource
 def init_connection():
     scopes = [
         "https://www.googleapis.com/auth/spreadsheets",
         "https://www.googleapis.com/auth/drive"
     ]
-    # Carga las credenciales desde los Secrets de Streamlit
     creds = Credentials.from_service_account_info(
         st.secrets["gcp_service_account"], scopes=scopes
     )
@@ -22,10 +21,12 @@ def init_connection():
     return client
 
 try:
-    # Conectar y abrir la hoja
     client = init_connection()
     SHEET_URL = st.secrets["SPREADSHEET_URL"]
-    sheet = client.open_by_url(SHEET_URL).sheet1
+    
+    # Extraer el ID de la planilla de forma segura
+    sheet_id = SHEET_URL.split("/d/")[1].split("/")[0]
+    sheet = client.open_by_key(sheet_id).sheet1
 
     # Función para obtener datos frescos
     def get_data():
