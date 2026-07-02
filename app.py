@@ -1,6 +1,3 @@
-import streamlit as st
-import gspread
-
 @st.cache_resource
 def init_connection():
     creds_dict = dict(st.secrets["gcp_service_account"])
