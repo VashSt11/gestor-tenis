@@ -60,7 +60,7 @@ try:
                 st.success(f"¡Registro guardado para {alumno_input}!")
                 st.rerun()
 
-    # --- 4. VISTA CENTRAL (AHORA CON 3 PESTAÑAS) ---
+    # --- 4. VISTA CENTRAL ---
     tab1, tab2, tab3 = st.tabs(["📋 Padrón General", "📅 Historial", "💡 Buscar Recuperación"])
     
     with tab1:
@@ -87,43 +87,70 @@ try:
         else:
             st.info("No hay ausencias ni recuperaciones registradas aún.")
             
-    # --- PESTAÑA NUEVA: RECOMENDADOR ---
+    # --- PESTAÑA NUEVA: RECOMENDADOR INTELIGENTE ---
     with tab3:
         st.subheader("Buscador de Horarios para Recuperar")
         alumno_recupera = st.selectbox("Seleccioná un alumno para ver sus opciones:", [""] + nombres_alumnos)
         
         if alumno_recupera:
-            # Identificamos los datos del alumno elegido
             datos_alumno = df_alumnos[df_alumnos["Nombre del alumno"] == alumno_recupera].iloc[0]
-            sede_alumno = datos_alumno.get("Sede", "")
-            grupo_alumno = datos_alumno.get("Grupo", "")
+            sede_alumno = str(datos_alumno.get("Sede", "")).strip()
+            grupo_alumno = str(datos_alumno.get("Grupo", "")).strip()
             
-            st.markdown(f"**Nivel actual del alumno:** Sede {sede_alumno} | Grupo {grupo_alumno}")
-            
-            # Filtramos la grilla buscando otros alumnos del mismo grupo y sede
-            # Descartamos al propio alumno para no sugerirle su horario original
-            df_otros = df_alumnos[
-                (df_alumnos["Sede"] == sede_alumno) & 
-                (df_alumnos["Grupo"] == grupo_alumno) & 
-                (df_alumnos["Nombre del alumno"] != alumno_recupera)
-            ]
-            
+            st.markdown(f"**Nivel/Tipo actual:** Sede {sede_alumno} | {grupo_alumno}")
             dias_semana = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes"]
-            horarios_disponibles = set()
             
-            # Recorremos los días para extraer a qué hora hay clases de ese nivel
-            for dia in dias_semana:
-                if dia in df_otros.columns:
-                    for horario in df_otros[dia].dropna().unique():
-                        if str(horario).strip() != "":
-                            horarios_disponibles.add(f"{dia}: {horario}")
-            
-            if horarios_disponibles:
-                st.success("✅ Opciones encontradas para el mismo grupo y sede:")
-                for h in sorted(horarios_disponibles):
-                    st.write(f"- **{h}**")
+            # --- LÓGICA PARA PRIVADOS ---
+            if "privado" in grupo_alumno.lower():
+                st.info("ℹ️ **Regla para Privados:** Solo recuperan en horarios vacíos o excepcionalmente en la franja de 13 a 17 hs (aunque haya cupos mínimos).")
+                
+                # Buscamos qué está ocupado en esa sede para mostrarte los huecos
+                df_sede = df_alumnos[df_alumnos["Sede"] == sede_alumno]
+                ocupados_por_dia = {dia: set() for dia in dias_semana}
+                
+                for dia in dias_semana:
+                    if dia in df_sede.columns:
+                        for horario in df_sede[dia].dropna().unique():
+                            val = str(horario).strip().upper()
+                            if val != "":
+                                ocupados_por_dia[dia].add(val)
+                
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.success("✅ **Opciones Permitidas**")
+                    st.write("- **Franja de 13:00 a 17:00 hs** (Cualquier día de la semana).")
+                    st.write("- **Cualquier horario vacío** (Que no figure en la lista de la derecha).")
+                    
+                with col2:
+                    st.error(f"🚫 **Horarios Ocupados en Sede {sede_alumno}**")
+                    for dia in dias_semana:
+                        if ocupados_por_dia[dia]:
+                            st.write(f"- **{dia}:** {', '.join(sorted(ocupados_por_dia[dia]))}")
+                        else:
+                            st.write(f"- **{dia}:** Totalmente libre")
+
+            # --- LÓGICA PARA GRUPALES ---
             else:
-                st.warning("No se encontraron horarios alternativos para este nivel en la grilla actual.")
+                df_otros = df_alumnos[
+                    (df_alumnos["Sede"] == sede_alumno) & 
+                    (df_alumnos["Grupo"] == grupo_alumno) & 
+                    (df_alumnos["Nombre del alumno"] != alumno_recupera)
+                ]
+                
+                horarios_disponibles = set()
+                for dia in dias_semana:
+                    if dia in df_otros.columns:
+                        for horario in df_otros[dia].dropna().unique():
+                            val = str(horario).strip()
+                            if val != "":
+                                horarios_disponibles.add(f"{dia}: {val}")
+                
+                if horarios_disponibles:
+                    st.success("✅ **Opciones encontradas para el mismo grupo y sede:**")
+                    for h in sorted(horarios_disponibles):
+                        st.write(f"- **{h}**")
+                else:
+                    st.warning("No se encontraron horarios alternativos para este nivel en la grilla actual.")
 
 except Exception as e:
     st.error(f"Error técnico: {e}")
