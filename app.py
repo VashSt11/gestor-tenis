@@ -3,6 +3,7 @@ import pandas as pd
 from datetime import date
 import gspread
 from google.oauth2.service_account import Credentials
+import numpy as np
 
 st.set_page_config(page_title="Gestor de Alumnos", layout="wide")
 st.title("🎾 Gestor de Asistencias y Recuperaciones")
@@ -32,12 +33,21 @@ try:
     def get_data():
         data = sheet.get_all_records()
         df = pd.DataFrame(data)
+        
+        # Limpieza inicial fuerte para evitar NaNs que rompan gspread
+        df = df.replace({np.nan: "", pd.NaT: ""})
+        
         if "Clases a recuperar" not in df.columns:
             df["Clases a recuperar"] = 0
+            
+        # Forzar a int, si hay error, poner 0
         df["Clases a recuperar"] = pd.to_numeric(df["Clases a recuperar"], errors='coerce').fillna(0).astype(int)
         
         if "Ausencias Registradas" not in df.columns:
             df["Ausencias Registradas"] = ""
+            
+        # Limpiar otra vez por si acaso
+        df = df.fillna("")
         return df
 
     # Cargar datos al iniciar
@@ -46,9 +56,19 @@ try:
 
     # Función para guardar datos en Google Sheets
     def update_sheet(df_actualizado):
-        df_limpio = df_actualizado.fillna("")
-        sheet.clear()
-        sheet.update(values=[df_limpio.columns.values.tolist()] + df_limpio.values.tolist())
+        try:
+            # 1. Rellenar TODOS los NaNs con string vacío
+            df_limpio = df_actualizado.copy()
+            df_limpio = df_limpio.replace({np.nan: "", pd.NaT: "", None: ""})
+            df_limpio = df_limpio.fillna("")
+            
+            # 2. Asegurar que las clases sean int, si por algún motivo mutaron a float
+            df_limpio["Clases a recuperar"] = df_limpio["Clases a recuperar"].astype(int)
+            
+            sheet.clear()
+            sheet.update(values=[df_limpio.columns.values.tolist()] + df_limpio.values.tolist())
+        except Exception as sheet_err:
+            st.error(f"Error al escribir en la hoja: {sheet_err}. Probablemente haya un dato con formato incorrecto.")
 
     df = st.session_state.df
 
@@ -61,7 +81,7 @@ try:
     with tab_diario:
         st.sidebar.header("🔍 Filtros de Cancha")
         
-        # NUEVO: Buscador por nombre
+        # Buscador por nombre
         search_query = st.sidebar.text_input("🔎 Buscar por Nombre:", placeholder="Escribí un nombre...")
         
         sede_filter = st.sidebar.selectbox("Seleccionar Sede", ["Todas", "Palermo", "Nuñez"])
@@ -69,15 +89,19 @@ try:
 
         filtered_df = df.copy()
         
-        # Aplicar búsqueda por nombre primero (si hay texto)
         if search_query.strip():
-            filtered_df = filtered_df[filtered_df["Nombre del alumno"].str.contains(search_query, case=False, na=False)]
+            filtered_df = filtered_df[filtered_df["Nombre del alumno"].astype(str).str.contains(search_query, case=False, na=False)]
             
         if sede_filter != "Todas":
             filtered_df = filtered_df[filtered_df["Sede"] == sede_filter]
         
         if dia_filter != "Todos":
-            filtered_df = filtered_df[filtered_df[dia_filter].notna() & (filtered_df[dia_filter] != "")]
+            # Filtrar asegurando que no sea nulo ni string vacío
+            filtered_df = filtered_df[
+                filtered_df[dia_filter].notna() & 
+                (filtered_df[dia_filter] != "") & 
+                (filtered_df[dia_filter].astype(str).str.strip() != "")
+            ]
 
         if search_query.strip():
             st.subheader(f"📍 Resultados para: '{search_query}'")
@@ -103,7 +127,12 @@ try:
                     else:
                         col2.write(f"📍 {row['Sede']}")
                         
-                    recuperar = int(row['Clases a recuperar'])
+                    # Manejo seguro del contador
+                    try:
+                        recuperar = int(row['Clases a recuperar'])
+                    except:
+                        recuperar = 0
+                        
                     col3.write(f"🔄 A recuperar: **{recuperar}**")
                     
                     with col4.expander("⚙️ Gestionar"):
@@ -118,13 +147,21 @@ try:
                         fecha_falta = st.date_input("Fecha de la ausencia:", key=f"fecha_{index}")
                         
                         if st.button("➕ Confirmar Falta", key=f"falta_{index}"):
-                            st.session_state.df.at[index, "Clases a recuperar"] += 1
+                            # Leer el valor actual por si acaso, asegurar que es int
+                            try:
+                                actual_val = int(st.session_state.df.at[index, "Clases a recuperar"])
+                            except:
+                                actual_val = 0
+                                
+                            st.session_state.df.at[index, "Clases a recuperar"] = actual_val + 1
+                            
                             fecha_str = fecha_falta.strftime("%d/%m/%Y")
                             
-                            if pd.isna(st.session_state.df.at[index, "Ausencias Registradas"]) or str(st.session_state.df.at[index, "Ausencias Registradas"]).strip() == "":
+                            hist = str(st.session_state.df.at[index, "Ausencias Registradas"])
+                            if hist == "nan" or hist.strip() == "":
                                 st.session_state.df.at[index, "Ausencias Registradas"] = fecha_str
                             else:
-                                st.session_state.df.at[index, "Ausencias Registradas"] = str(st.session_state.df.at[index, "Ausencias Registradas"]) + ", " + fecha_str
+                                st.session_state.df.at[index, "Ausencias Registradas"] = hist + ", " + fecha_str
                             
                             update_sheet(st.session_state.df)
                             st.rerun()
@@ -137,7 +174,8 @@ try:
                                 grupo = str(row['Grupo']).lower()
                                 if "privado" in grupo or "individual" in grupo:
                                     st.toast(f"⚠️ Cuidado: {row['Nombre del alumno']} es {row['Grupo']}.")
-                                st.session_state.df.at[index, "Clases a recuperar"] -= 1
+                                
+                                st.session_state.df.at[index, "Clases a recuperar"] = recuperar - 1
                                 update_sheet(st.session_state.df)
                                 st.rerun()
                     st.markdown("---")
@@ -154,7 +192,6 @@ try:
         grupo_vacante = col_v1.selectbox("¿De qué Nivel/Grupo es el espacio libre?", grupos_disponibles)
         sede_vacante = col_v2.selectbox("¿En qué sede?", ["Todas", "Palermo", "Nuñez"])
         
-        # NUEVO: Checkbox para ignorar la fecha y ver la lista completa
         ignorar_fecha = st.checkbox("Ignorar fecha (Ver lista completa de deudores)")
         
         if not ignorar_fecha:
@@ -163,24 +200,24 @@ try:
         
         st.write("---")
         
-        # Filtramos solo los que deben clases
-        df_deudores = df[df["Clases a recuperar"] > 0]
+        # Filtramos seguro (que sea número y mayor a 0)
+        df_deudores = df.copy()
+        df_deudores["Clases a recuperar"] = pd.to_numeric(df_deudores["Clases a recuperar"], errors='coerce').fillna(0).astype(int)
+        df_deudores = df_deudores[df_deudores["Clases a recuperar"] > 0]
         
-        # Aplicamos filtros de grupo y sede
         if grupo_vacante != "Todos":
             df_deudores = df_deudores[df_deudores["Grupo"] == grupo_vacante]
         if sede_vacante != "Todas":
             df_deudores = df_deudores[df_deudores["Sede"] == sede_vacante]
             
         def esta_ausente_ese_dia(historial, fecha_buscar):
-            if pd.isna(historial): return False
-            return fecha_buscar in str(historial)
+            hist_str = str(historial)
+            if hist_str == "nan" or hist_str.strip() == "": return False
+            return fecha_buscar in hist_str
 
-        # Si no se marca la casilla "ignorar_fecha", aplicamos la restricción de que no estén ausentes
         if not ignorar_fecha:
             df_suplentes = df_deudores[~df_deudores["Ausencias Registradas"].apply(lambda x: esta_ausente_ese_dia(x, fecha_vacante_str))]
         else:
-            # Si marcamos la casilla, mostramos todos los deudores sin importar las fechas
             df_suplentes = df_deudores
             
         if df_suplentes.empty:
