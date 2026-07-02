@@ -3,6 +3,7 @@ import gspread
 from google.oauth2.service_account import Credentials
 import pandas as pd
 from datetime import datetime
+import re
 
 st.set_page_config(page_title="Gestor de Tenis", layout="wide")
 st.title("🎾 Gestor de Asistencias y Recuperaciones")
@@ -87,7 +88,7 @@ try:
         else:
             st.info("No hay ausencias ni recuperaciones registradas aún.")
             
-    # --- PESTAÑA NUEVA: RECOMENDADOR INTELIGENTE ---
+    # --- PESTAÑA NUEVA: RECOMENDADOR INTELIGENTE VISUAL ---
     with tab3:
         st.subheader("Buscador de Horarios para Recuperar")
         alumno_recupera = st.selectbox("Seleccioná un alumno para ver sus opciones:", [""] + nombres_alumnos)
@@ -100,57 +101,71 @@ try:
             st.markdown(f"**Nivel/Tipo actual:** Sede {sede_alumno} | {grupo_alumno}")
             dias_semana = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes"]
             
+            # Helper: Extrae el número de inicio de la hora (ej "17 A 18" -> 17)
+            def extraer_hora(texto):
+                match = re.search(r'^(\d+)', str(texto).strip())
+                return int(match.group(1)) if match else -1
+
             # --- LÓGICA PARA PRIVADOS ---
             if "privado" in grupo_alumno.lower():
-                st.info("ℹ️ **Regla para Privados:** Solo recuperan en horarios vacíos o excepcionalmente en la franja de 13 a 17 hs (aunque haya cupos mínimos).")
-                
-                # Buscamos qué está ocupado en esa sede para mostrarte los huecos
+                st.info("ℹ️ Mostrando **horarios completamente libres** en la sede y espacios permitidos (13 a 17 hs).")
                 df_sede = df_alumnos[df_alumnos["Sede"] == sede_alumno]
-                ocupados_por_dia = {dia: set() for dia in dias_semana}
                 
-                for dia in dias_semana:
-                    if dia in df_sede.columns:
-                        for horario in df_sede[dia].dropna().unique():
-                            val = str(horario).strip().upper()
-                            if val != "":
-                                ocupados_por_dia[dia].add(val)
+                # Creamos las 5 columnas en pantalla
+                cols = st.columns(5)
                 
-                col1, col2 = st.columns(2)
-                with col1:
-                    st.success("✅ **Opciones Permitidas**")
-                    st.write("- **Franja de 13:00 a 17:00 hs** (Cualquier día de la semana).")
-                    st.write("- **Cualquier horario vacío** (Que no figure en la lista de la derecha).")
-                    
-                with col2:
-                    st.error(f"🚫 **Horarios Ocupados en Sede {sede_alumno}**")
-                    for dia in dias_semana:
-                        if ocupados_por_dia[dia]:
-                            st.write(f"- **{dia}:** {', '.join(sorted(ocupados_por_dia[dia]))}")
-                        else:
-                            st.write(f"- **{dia}:** Totalmente libre")
+                for idx, dia in enumerate(dias_semana):
+                    with cols[idx]:
+                        st.markdown(f"**{dia}**")
+                        if dia in df_sede.columns:
+                            # Identificamos qué horas ESTÁN ocupadas
+                            horas_ocupadas = set()
+                            for h in df_sede[dia].dropna():
+                                num = extraer_hora(h)
+                                if num != -1:
+                                    horas_ocupadas.add(num)
+                            
+                            hay_opciones = False
+                            # Calculamos e imprimimos solo los libres (de 8 a 21hs)
+                            for hora in range(8, 22):
+                                es_tarde = 13 <= hora < 17
+                                if hora not in horas_ocupadas:
+                                    st.write(f"✅ {hora} a {hora+1} hs")
+                                    hay_opciones = True
+                                elif es_tarde:
+                                    st.write(f"⭐ {hora} a {hora+1} hs *(Excep.)*")
+                                    hay_opciones = True
+                            
+                            if not hay_opciones:
+                                st.write("❌ Sin cupos")
 
             # --- LÓGICA PARA GRUPALES ---
             else:
+                st.info("ℹ️ Mostrando opciones de tu mismo nivel en otros grupos.")
                 df_otros = df_alumnos[
                     (df_alumnos["Sede"] == sede_alumno) & 
                     (df_alumnos["Grupo"] == grupo_alumno) & 
                     (df_alumnos["Nombre del alumno"] != alumno_recupera)
                 ]
                 
-                horarios_disponibles = set()
-                for dia in dias_semana:
-                    if dia in df_otros.columns:
-                        for horario in df_otros[dia].dropna().unique():
-                            val = str(horario).strip()
-                            if val != "":
-                                horarios_disponibles.add(f"{dia}: {val}")
-                
-                if horarios_disponibles:
-                    st.success("✅ **Opciones encontradas para el mismo grupo y sede:**")
-                    for h in sorted(horarios_disponibles):
-                        st.write(f"- **{h}**")
-                else:
-                    st.warning("No se encontraron horarios alternativos para este nivel en la grilla actual.")
+                cols = st.columns(5)
+                for idx, dia in enumerate(dias_semana):
+                    with cols[idx]:
+                        st.markdown(f"**{dia}**")
+                        if dia in df_otros.columns:
+                            opciones_dia = []
+                            for horario in df_otros[dia].dropna().unique():
+                                val = str(horario).strip()
+                                if val != "":
+                                    opciones_dia.append(val)
+                            
+                            if opciones_dia:
+                                # Las ordenamos cronológicamente de menor a mayor
+                                opciones_dia.sort(key=extraer_hora)
+                                for opc in opciones_dia:
+                                    st.write(f"✅ {opc}")
+                            else:
+                                st.write("-")
 
 except Exception as e:
     st.error(f"Error técnico: {e}")
