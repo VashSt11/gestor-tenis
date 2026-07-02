@@ -1,258 +1,50 @@
 import streamlit as st
-import pandas as pd
-import io
-from datetime import date
 import gspread
 from google.oauth2.service_account import Credentials
-import numpy as np
+import re
+
+# Limpiamos la caché a la fuerza para borrar errores viejos
+st.cache_resource.clear()
 
 st.set_page_config(page_title="Gestor de Alumnos", layout="wide")
 st.title("🎾 Gestor de Asistencias y Recuperaciones")
 
-if "df" not in st.session_state:
-    st.session_state.df = None
-# --- CONEXIÓN A GOOGLE SHEETS ---
 @st.cache_resource
 def init_connection():
+    creds_dict = dict(st.secrets["gcp_service_account"])
+    
+    # --- CÓDIGO DE AUTOSANACIÓN DE LA CLAVE ---
+    raw_key = creds_dict["private_key"]
+    
+    # 1. Buscamos todo lo que está entre el BEGIN y el END
+    match = re.search(r'-----BEGIN PRIVATE KEY-----(.*?)-----END PRIVATE KEY-----', raw_key, flags=re.DOTALL)
+    
+    if match:
+        # 2. Extraemos la clave, y borramos saltos de línea falsos, espacios o comillas
+        b64_string = match.group(1)
+        b64_string = b64_string.replace('\\n', '').replace('\n', '').replace(' ', '').replace('"', '')
+        
+        # 3. Reconstruimos la clave con la estructura PERFECTA
+        perfect_key = f"-----BEGIN PRIVATE KEY-----\n{b64_string}\n-----END PRIVATE KEY-----\n"
+        creds_dict["private_key"] = perfect_key
+    else:
+        # Respaldo por si se borraron los encabezados en los Secrets
+        clean_key = raw_key.replace('\\n', '').replace('\n', '').replace(' ', '')
+        creds_dict["private_key"] = f"-----BEGIN PRIVATE KEY-----\n{clean_key}\n-----END PRIVATE KEY-----\n"
+    # ------------------------------------------
+
     scopes = [
-        "https://www.googleapis.com/auth/spreadsheets",
+        "https://www.googleapis.com/auth/spreadsheets", 
         "https://www.googleapis.com/auth/drive"
     ]
-    creds = Credentials.from_service_account_info(
-        st.secrets["gcp_service_account"], scopes=scopes
-    )
-    client = gspread.authorize(creds)
-    return client
+    creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
+    return gspread.authorize(creds)
 
-# ----------------------------------------
-# 1. MOTOR DE IMPORTACIÓN (Volvimos al que funcionaba)
-# ----------------------------------------
-st.sidebar.header("📁 Carga de Datos")
-uploaded_file = st.sidebar.file_uploader("Subir matriz de alumnos (.xlsx)", type=["xlsx"])
+# Intentar conectar
 try:
     client = init_connection()
-    SHEET_URL = st.secrets["SPREADSHEET_URL"]
+    sheet = client.open_by_key("1MC0tdj5LJn8BtfEdTJjsYjSuk6PDirZejkKQEJlnoYo").sheet1
+    st.success("✅ ¡Conexión restaurada con éxito!")
     
-    # Extraer el ID de la planilla de forma segura
-    sheet_id = SHEET_URL.split("/d/")[1].split("/")[0]
-    sheet = client.open_by_key(sheet_id).sheet1
-
-# Botón para forzar el reseteo si querés subir un Excel nuevo
-if st.sidebar.button("🔄 Cargar un archivo nuevo"):
-    st.session_state.df = None
-    st.rerun()
-    # Función para obtener datos frescos
-    def get_data():
-        data = sheet.get_all_records()
-        df = pd.DataFrame(data)
-        if "Clases a recuperar" not in df.columns:
-            df["Clases a recuperar"] = 0
-        df["Clases a recuperar"] = pd.to_numeric(df["Clases a recuperar"], errors='coerce').fillna(0).astype(int)
-        
-        if "Ausencias Registradas" not in df.columns:
-            df["Ausencias Registradas"] = ""
-            
-        return df.fillna("")
-
-if uploaded_file is not None and st.session_state.df is None:
-    df_temp = pd.read_excel(uploaded_file)
-    
-    # Limpieza inicial
-    df_temp = df_temp.replace({np.nan: "", pd.NaT: ""})
-    if "Clases a recuperar" not in df_temp.columns:
-        df_temp["Clases a recuperar"] = 0
-    df_temp["Clases a recuperar"] = pd.to_numeric(df_temp["Clases a recuperar"], errors='coerce').fillna(0).astype(int)
-    
-    if "Ausencias Registradas" not in df_temp.columns:
-        df_temp["Ausencias Registradas"] = ""
-    # Cargar datos al iniciar
-    if "df" not in st.session_state:
-        st.session_state.df = get_data()
-
-    # Función para guardar datos en Google Sheets
-    def update_sheet(df_actualizado):
-        df_limpio = df_actualizado.copy()
-        df_limpio = df_limpio.replace({np.nan: "", pd.NaT: "", None: ""}).fillna("")
-        df_limpio["Clases a recuperar"] = df_limpio["Clases a recuperar"].astype(int)
-
-    st.session_state.df = df_temp.fillna("")
-    st.sidebar.success("¡Base de datos cargada!")
-        sheet.clear()
-        sheet.update(values=[df_limpio.columns.values.tolist()] + df_limpio.values.tolist())
-
-if st.session_state.df is not None:
-    df = st.session_state.df
-
-    # --- PESTAÑAS DE LA APP ---
-    tab_diario, tab_vacantes = st.tabs(["📅 Asistencias Diarias", "🔍 Buscar Suplente"])
-
-    # ----------------------------------------
-    # PESTAÑA 1: ASISTENCIAS DIARIAS
-    # ----------------------------------------
-    with tab_diario:
-        st.sidebar.header("🔍 Filtros de Cancha")
-
-        # Buscador por nombre
-        # 1. Buscador por nombre integrado
-        search_query = st.sidebar.text_input("🔎 Buscar por Nombre:", placeholder="Escribí un nombre...")
-
-        sede_filter = st.sidebar.selectbox("Seleccionar Sede", ["Todas", "Palermo", "Nuñez"])
-        dia_filter = st.sidebar.selectbox("Seleccionar Día", ["Todos", "Lunes", "Martes", "Miércoles", "Jueves", "Viernes"])
-
-        filtered_df = df.copy()
-
-        if search_query.strip():
-            filtered_df = filtered_df[filtered_df["Nombre del alumno"].astype(str).str.contains(search_query, case=False, na=False)]
-
-        if sede_filter != "Todas":
-            filtered_df = filtered_df[filtered_df["Sede"] == sede_filter]
-
-        if dia_filter != "Todos":
-            filtered_df = filtered_df[
-                filtered_df[dia_filter].notna() & 
-                (filtered_df[dia_filter] != "") & 
-                (filtered_df[dia_filter].astype(str).str.strip() != "")
-            ]
-
-        if search_query.strip():
-            st.subheader(f"📍 Resultados para: '{search_query}'")
-        else:
-            st.subheader(f"📍 Mostrando alumnos de {sede_filter} - Día: {dia_filter}")
-            
-        if st.button("🔄 Refrescar Datos desde Google Sheets"):
-            st.session_state.df = get_data()
-            st.rerun()
-
-        if filtered_df.empty:
-            st.info("No se encontraron alumnos con estos filtros.")
-        else:
-            for index, row in filtered_df.iterrows():
-                with st.container():
-                    col1, col2, col3, col4 = st.columns([3, 2, 2, 3])
-
-                    col1.write(f"**{row['Nombre del alumno']}**")
-                    col1.caption(f"Grupo: {row['Grupo']}")
-
-                    if dia_filter != "Todos":
-                        col2.write(f"🕒 {row[dia_filter]}")
-                    else:
-                        col2.write(f"📍 {row['Sede']}")
-
-                    try:
-                        recuperar = int(row['Clases a recuperar'])
-                    except:
-                        recuperar = 0
-
-                    col3.write(f"🔄 A recuperar: **{recuperar}**")
-
-                    with col4.expander("⚙️ Gestionar"):
-                        historial_actual = str(row.get("Ausencias Registradas", ""))
-                        if historial_actual != "nan" and historial_actual.strip() != "":
-                            st.markdown(f"**📅 Historial de Faltas:**\n\n`{historial_actual}`")
-                        else:
-                            st.markdown("*No tiene faltas registradas.*")
-                        st.markdown("---")
-
-                        st.write("**Registrar Ausencia**")
-                        fecha_falta = st.date_input("Fecha de la ausencia:", key=f"fecha_{index}")
-
-                        if st.button("➕ Confirmar Falta", key=f"falta_{index}"):
-                            try:
-                                actual_val = int(st.session_state.df.at[index, "Clases a recuperar"])
-                            except:
-                                actual_val = 0
-                                
-                            st.session_state.df.at[index, "Clases a recuperar"] = actual_val + 1
-                            st.session_state.df.at[index, "Clases a recuperar"] = recuperar + 1
-                            fecha_str = fecha_falta.strftime("%d/%m/%Y")
-
-                            hist = str(st.session_state.df.at[index, "Ausencias Registradas"])
-                            if hist == "nan" or hist.strip() == "":
-                                st.session_state.df.at[index, "Ausencias Registradas"] = fecha_str
-                            else:
-                                st.session_state.df.at[index, "Ausencias Registradas"] = hist + ", " + fecha_str
-
-                            update_sheet(st.session_state.df)
-                            st.rerun()
-
-                        st.markdown("---")
-
-                        st.write("**Registrar Recuperación**")
-                        if st.button("➖ Ya recuperó 1 clase", key=f"recup_{index}"):
-                            if recuperar > 0:
-                                grupo = str(row['Grupo']).lower()
-                                if "privado" in grupo or "individual" in grupo:
-                                    st.toast(f"⚠️ Cuidado: {row['Nombre del alumno']} es {row['Grupo']}.")
-
-                                st.session_state.df.at[index, "Clases a recuperar"] = recuperar - 1
-                                update_sheet(st.session_state.df)
-                                st.rerun()
-                    st.markdown("---")
-
-    # ----------------------------------------
-    # PESTAÑA 2: BUSCADOR DE SUPLENTES
-    # ----------------------------------------
-    with tab_vacantes:
-        st.subheader("Buscador de Alumnos para Rellenar Vacantes")
-
-        col_v1, col_v2, col_v3 = st.columns(3)
-
-        grupos_disponibles = ["Todos"] + sorted([g for g in df["Grupo"].dropna().unique() if str(g).strip() != ""])
-        grupo_vacante = col_v1.selectbox("¿De qué Nivel/Grupo es el espacio libre?", grupos_disponibles)
-        sede_vacante = col_v2.selectbox("¿En qué sede?", ["Todas", "Palermo", "Nuñez"])
-
-        # 2. Casilla para ignorar la fecha
-        ignorar_fecha = st.checkbox("Ignorar fecha (Ver lista completa de deudores)")
-
-        if not ignorar_fecha:
-            fecha_vacante = col_v3.date_input("¿Para qué fecha es la vacante?")
-            fecha_vacante_str = fecha_vacante.strftime("%d/%m/%Y")
-
-        st.write("---")
-
-        df_deudores = df.copy()
-        df_deudores["Clases a recuperar"] = pd.to_numeric(df_deudores["Clases a recuperar"], errors='coerce').fillna(0).astype(int)
-        df_deudores = df_deudores[df_deudores["Clases a recuperar"] > 0]
-
-        if grupo_vacante != "Todos":
-            df_deudores = df_deudores[df_deudores["Grupo"] == grupo_vacante]
-        if sede_vacante != "Todas":
-            df_deudores = df_deudores[df_deudores["Sede"] == sede_vacante]
-
-        def esta_ausente_ese_dia(historial, fecha_buscar):
-            hist_str = str(historial)
-            if hist_str == "nan" or hist_str.strip() == "": return False
-            return fecha_buscar in hist_str
-
-        if not ignorar_fecha:
-            df_suplentes = df_deudores[~df_deudores["Ausencias Registradas"].apply(lambda x: esta_ausente_ese_dia(x, fecha_vacante_str))]
-        else:
-            df_suplentes = df_deudores
-
-        if df_suplentes.empty:
-            st.success("✅ No hay alumnos compatibles que deban clases con estos filtros.")
-        else:
-            st.warning(f"🎯 Encontramos **{len(df_suplentes)}** alumno/s disponibles:")
-            for idx, suplente in df_suplentes.iterrows():
-                with st.container():
-                    st.markdown(f"🎾 **{suplente['Nombre del alumno']}** | Debe: **{int(suplente['Clases a recuperar'])} clase(s)** | Sede base: {suplente['Sede']}")
-
-    # ----------------------------------------
-    # DESCARGA DEL EXCEL ACTUALIZADO
-    # ----------------------------------------
-    st.sidebar.markdown("---")
-    st.sidebar.header("💾 Guardar Trabajo")
-    buffer = io.BytesIO()
-    with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
-        st.session_state.df.to_excel(writer, index=False)
-    
-    st.sidebar.download_button(
-        label="📥 Descargar Planilla Actualizada",
-        data=buffer,
-        file_name="Planilla_Alumnos_Actualizada.xlsx",
-        mime="application/vnd.ms-excel"
-    )
-else:
-    st.info("👋 ¡Hola! Subí la última versión de tu Excel para empezar.")
 except Exception as e:
-    st.error(f"Error técnico con Google Sheets: {e}")
+    st.error(f"Error técnico de conexión: {e}")
