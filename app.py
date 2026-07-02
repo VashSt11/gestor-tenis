@@ -8,22 +8,21 @@ import numpy as np
 st.set_page_config(page_title="Gestor de Alumnos", layout="wide")
 st.title("🎾 Gestor de Asistencias y Recuperaciones")
 
-# --- CONEXIÓN A GOOGLE SHEETS ---
-@st.cache_resource
-def init_connection():
-    scopes = [
-        "https://www.googleapis.com/auth/spreadsheets",
-        "https://www.googleapis.com/auth/drive"
-    ]
-    creds = Credentials.from_service_account_info(
-        st.secrets["gcp_service_account"], scopes=scopes
-    )
-    client = gspread.authorize(creds)
-    return client
-
+# --- CONEXIÓN DE PRUEBA ---
 try:
     client = init_connection()
-    SHEET_URL = st.secrets["SPREADSHEET_URL"]
+    # Usamos el ID directamente
+    sheet_id = "1MC0tdj5LJn8BtfEdTJjsYjSuk6PDirZejkKQEJlnoYo"
+    
+    # Intentamos abrir el archivo
+    doc = client.open_by_key(sheet_id)
+    
+    # Intentamos abrir la primera hoja (si tu hoja tiene otro nombre, cambialo acá)
+    sheet = doc.get_worksheet(0) 
+    st.success("¡Conexión exitosa con Google Sheets!")
+    
+except Exception as e:
+    st.error(f"Error específico de conexión: {e}")
     
     # Extraer el ID de la planilla
     sheet_id = SHEET_URL.split("/d/")[1].split("/")[0]
