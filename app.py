@@ -22,10 +22,10 @@ def init_connection():
     return client
 
 try:
-    # Conectar y abrir la hoja
+    # Conectar y abrir la hoja usando el ID (es más seguro que la URL)
     client = init_connection()
-    SHEET_URL = st.secrets["SPREADSHEET_URL"]
-    sheet = client.open_by_url(SHEET_URL).sheet1
+    sheet_id = "1MC0tdj5LJn8BtfEdTJjsYjSuk6PDirZejkKQEJlnoYo"
+    sheet = client.open_by_key(sheet_id).sheet1
 
     # Función para obtener datos frescos
     def get_data():
