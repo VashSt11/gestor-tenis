@@ -25,11 +25,11 @@ try:
     client = init_connection()
     SHEET_URL = st.secrets["SPREADSHEET_URL"]
     
-    # Extraer el ID de la planilla de forma segura
+    # Extraer el ID de la planilla
     sheet_id = SHEET_URL.split("/d/")[1].split("/")[0]
     sheet = client.open_by_key(sheet_id).sheet1
 
-    # Función para obtener datos frescos
+    # Función para obtener datos
     def get_data():
         data = sheet.get_all_records()
         df = pd.DataFrame(data)
@@ -46,7 +46,7 @@ try:
     if "df" not in st.session_state:
         st.session_state.df = get_data()
 
-    # Función para guardar datos en Google Sheets
+    # Función para guardar datos
     def update_sheet(df_actualizado):
         df_limpio = df_actualizado.copy()
         df_limpio = df_limpio.replace({np.nan: "", pd.NaT: "", None: ""}).fillna("")
@@ -66,7 +66,7 @@ try:
     with tab_diario:
         st.sidebar.header("🔍 Filtros de Cancha")
         
-        # 1. Buscador por nombre integrado
+        # BUSCADOR POR NOMBRE
         search_query = st.sidebar.text_input("🔎 Buscar por Nombre:", placeholder="Escribí un nombre...")
         
         sede_filter = st.sidebar.selectbox("Seleccionar Sede", ["Todas", "Palermo", "Nuñez"])
@@ -168,7 +168,7 @@ try:
         grupo_vacante = col_v1.selectbox("¿De qué Nivel/Grupo es el espacio libre?", grupos_disponibles)
         sede_vacante = col_v2.selectbox("¿En qué sede?", ["Todas", "Palermo", "Nuñez"])
         
-        # 2. Casilla para ignorar la fecha
+        # CASILLA PARA IGNORAR FECHA
         ignorar_fecha = st.checkbox("Ignorar fecha (Ver lista completa de deudores)")
         
         if not ignorar_fecha:
