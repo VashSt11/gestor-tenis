@@ -21,11 +21,8 @@ def init_connection():
     return client
 
 try:
-# Conectar y abrir la hoja usando el ID directamente en lugar de la URL
+# Conectar y abrir la hoja usando el ID (es más seguro que la URL)
     client = init_connection()
-    
-    # El ID de tu planilla es: 1MC0tdj5LJn8BtfEdTJjsYjSuk6PDirZejkKQEJlnoYo
-    # Lo sacamos de tu URL: docs.google.com/spreadsheets/d/AQUI_VA_EL_ID/edit...
     sheet_id = "1MC0tdj5LJn8BtfEdTJjsYjSuk6PDirZejkKQEJlnoYo"
     sheet = client.open_by_key(sheet_id).sheet1
 
