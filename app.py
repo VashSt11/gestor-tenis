@@ -1,75 +1,42 @@
 import streamlit as st
 import pandas as pd
+import io
 from datetime import date
-import gspread
-from google.oauth2.service_account import Credentials
 import numpy as np
 
 st.set_page_config(page_title="Gestor de Alumnos", layout="wide")
 st.title("🎾 Gestor de Asistencias y Recuperaciones")
 
-# --- CONEXIÓN A GOOGLE SHEETS MEJORADA ---
-@st.cache_resource
-def init_connection():
-    scopes = [
-        "https://www.googleapis.com/auth/spreadsheets",
-        "https://www.googleapis.com/auth/drive"
-    ]
-    creds = Credentials.from_service_account_info(
-        st.secrets["gcp_service_account"], scopes=scopes
-    )
-    client = gspread.authorize(creds)
-    return client
+if "df" not in st.session_state:
+    st.session_state.df = None
 
-try:
-    client = init_connection()
-    SHEET_URL = st.secrets["SPREADSHEET_URL"]
+# ----------------------------------------
+# 1. MOTOR DE IMPORTACIÓN (Volvimos al que funcionaba)
+# ----------------------------------------
+st.sidebar.header("📁 Carga de Datos")
+uploaded_file = st.sidebar.file_uploader("Subir matriz de alumnos (.xlsx)", type=["xlsx"])
+
+# Botón para forzar el reseteo si querés subir un Excel nuevo
+if st.sidebar.button("🔄 Cargar un archivo nuevo"):
+    st.session_state.df = None
+    st.rerun()
+
+if uploaded_file is not None and st.session_state.df is None:
+    df_temp = pd.read_excel(uploaded_file)
     
-    # Extraer el ID de la planilla de forma segura
-    sheet_id = SHEET_URL.split("/d/")[1].split("/")[0]
-    sheet = client.open_by_key(sheet_id).sheet1
-
-    # Función para obtener datos frescos
-    def get_data():
-        data = sheet.get_all_records()
-        df = pd.DataFrame(data)
+    # Limpieza inicial
+    df_temp = df_temp.replace({np.nan: "", pd.NaT: ""})
+    if "Clases a recuperar" not in df_temp.columns:
+        df_temp["Clases a recuperar"] = 0
+    df_temp["Clases a recuperar"] = pd.to_numeric(df_temp["Clases a recuperar"], errors='coerce').fillna(0).astype(int)
+    
+    if "Ausencias Registradas" not in df_temp.columns:
+        df_temp["Ausencias Registradas"] = ""
         
-        # Limpieza inicial fuerte para evitar NaNs que rompan gspread
-        df = df.replace({np.nan: "", pd.NaT: ""})
-        
-        if "Clases a recuperar" not in df.columns:
-            df["Clases a recuperar"] = 0
-            
-        # Forzar a int, si hay error, poner 0
-        df["Clases a recuperar"] = pd.to_numeric(df["Clases a recuperar"], errors='coerce').fillna(0).astype(int)
-        
-        if "Ausencias Registradas" not in df.columns:
-            df["Ausencias Registradas"] = ""
-            
-        # Limpiar otra vez por si acaso
-        df = df.fillna("")
-        return df
+    st.session_state.df = df_temp.fillna("")
+    st.sidebar.success("¡Base de datos cargada!")
 
-    # Cargar datos al iniciar
-    if "df" not in st.session_state:
-        st.session_state.df = get_data()
-
-    # Función para guardar datos en Google Sheets
-    def update_sheet(df_actualizado):
-        try:
-            # 1. Rellenar TODOS los NaNs con string vacío
-            df_limpio = df_actualizado.copy()
-            df_limpio = df_limpio.replace({np.nan: "", pd.NaT: "", None: ""})
-            df_limpio = df_limpio.fillna("")
-            
-            # 2. Asegurar que las clases sean int, si por algún motivo mutaron a float
-            df_limpio["Clases a recuperar"] = df_limpio["Clases a recuperar"].astype(int)
-            
-            sheet.clear()
-            sheet.update(values=[df_limpio.columns.values.tolist()] + df_limpio.values.tolist())
-        except Exception as sheet_err:
-            st.error(f"Error al escribir en la hoja: {sheet_err}. Probablemente haya un dato con formato incorrecto.")
-
+if st.session_state.df is not None:
     df = st.session_state.df
 
     # --- PESTAÑAS DE LA APP ---
@@ -96,7 +63,6 @@ try:
             filtered_df = filtered_df[filtered_df["Sede"] == sede_filter]
         
         if dia_filter != "Todos":
-            # Filtrar asegurando que no sea nulo ni string vacío
             filtered_df = filtered_df[
                 filtered_df[dia_filter].notna() & 
                 (filtered_df[dia_filter] != "") & 
@@ -107,10 +73,6 @@ try:
             st.subheader(f"📍 Resultados para: '{search_query}'")
         else:
             st.subheader(f"📍 Mostrando alumnos de {sede_filter} - Día: {dia_filter}")
-            
-        if st.button("🔄 Refrescar Datos desde Google Sheets"):
-            st.session_state.df = get_data()
-            st.rerun()
 
         if filtered_df.empty:
             st.info("No se encontraron alumnos con estos filtros.")
@@ -127,7 +89,6 @@ try:
                     else:
                         col2.write(f"📍 {row['Sede']}")
                         
-                    # Manejo seguro del contador
                     try:
                         recuperar = int(row['Clases a recuperar'])
                     except:
@@ -147,14 +108,12 @@ try:
                         fecha_falta = st.date_input("Fecha de la ausencia:", key=f"fecha_{index}")
                         
                         if st.button("➕ Confirmar Falta", key=f"falta_{index}"):
-                            # Leer el valor actual por si acaso, asegurar que es int
                             try:
                                 actual_val = int(st.session_state.df.at[index, "Clases a recuperar"])
                             except:
                                 actual_val = 0
                                 
                             st.session_state.df.at[index, "Clases a recuperar"] = actual_val + 1
-                            
                             fecha_str = fecha_falta.strftime("%d/%m/%Y")
                             
                             hist = str(st.session_state.df.at[index, "Ausencias Registradas"])
@@ -163,7 +122,6 @@ try:
                             else:
                                 st.session_state.df.at[index, "Ausencias Registradas"] = hist + ", " + fecha_str
                             
-                            update_sheet(st.session_state.df)
                             st.rerun()
                         
                         st.markdown("---")
@@ -176,7 +134,6 @@ try:
                                     st.toast(f"⚠️ Cuidado: {row['Nombre del alumno']} es {row['Grupo']}.")
                                 
                                 st.session_state.df.at[index, "Clases a recuperar"] = recuperar - 1
-                                update_sheet(st.session_state.df)
                                 st.rerun()
                     st.markdown("---")
 
@@ -200,7 +157,6 @@ try:
         
         st.write("---")
         
-        # Filtramos seguro (que sea número y mayor a 0)
         df_deudores = df.copy()
         df_deudores["Clases a recuperar"] = pd.to_numeric(df_deudores["Clases a recuperar"], errors='coerce').fillna(0).astype(int)
         df_deudores = df_deudores[df_deudores["Clases a recuperar"] > 0]
@@ -228,5 +184,20 @@ try:
                 with st.container():
                     st.markdown(f"🎾 **{suplente['Nombre del alumno']}** | Debe: **{int(suplente['Clases a recuperar'])} clase(s)** | Sede base: {suplente['Sede']}")
 
-except Exception as e:
-    st.error(f"Error al conectar con Google Sheets. Asegurate de haber configurado bien los Secrets. Detalle técnico: {e}")
+    # ----------------------------------------
+    # DESCARGA DEL EXCEL ACTUALIZADO
+    # ----------------------------------------
+    st.sidebar.markdown("---")
+    st.sidebar.header("💾 Guardar Trabajo")
+    buffer = io.BytesIO()
+    with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
+        st.session_state.df.to_excel(writer, index=False)
+    
+    st.sidebar.download_button(
+        label="📥 Descargar Planilla Actualizada",
+        data=buffer,
+        file_name="Planilla_Alumnos_Actualizada.xlsx",
+        mime="application/vnd.ms-excel"
+    )
+else:
+    st.info("👋 ¡Hola! Subí la última versión de tu Excel para empezar.")
