@@ -25,7 +25,7 @@ try:
     # Conectar y abrir la hoja
     client = init_connection()
     SHEET_URL = st.secrets["https://docs.google.com/spreadsheets/d/1MC0tdj5LJn8BtfEdTJjsYjSuk6PDirZejkKQEJlnoYo/edit?usp=sharing"]
-    sheet = client.open_by_url(https://docs.google.com/spreadsheets/d/1MC0tdj5LJn8BtfEdTJjsYjSuk6PDirZejkKQEJlnoYo/edit?usp=sharing).sheet1
+    sheet = client.open_by_url(SHEET_URL).sheet1
 
     # Función para obtener datos frescos
     def get_data():
