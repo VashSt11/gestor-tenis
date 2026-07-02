@@ -1,18 +1,12 @@
 import streamlit as st
 import gspread
 
-# Usamos service_account_from_dict que es más amigable
 @st.cache_resource
-def get_connection():
-    # Convertimos los Secrets en un diccionario simple
+def init_connection():
     creds_dict = dict(st.secrets["gcp_service_account"])
-    # gspread se encarga de procesar la clave
-    client = gspread.service_account_from_dict(creds_dict)
-    return client
-
-try:
-    client = get_connection()
-    sheet = client.open_by_key("1MC0tdj5LJn8BtfEdTJjsYjSuk6PDirZejkKQEJlnoYo").sheet1
-    st.success("¡Conexión establecida con éxito!")
-except Exception as e:
-    st.error(f"Error: {e}")
+    # Convertimos manualmente los \n que Streamlit lee como texto
+    creds_dict["private_key"] = creds_dict["private_key"].replace("\\n", "\n")
+    
+    scopes = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
+    creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
+    return gspread.authorize(creds)
